@@ -79,7 +79,7 @@
     (or
      (known ?x)
      (and
-      (applicates ?y ?x)
+      (applicates ?y ?z)
       (consequence ?x of ?z)
       (true ?y)))
     (true ?x)) ;This rule is applicable for negation as well
