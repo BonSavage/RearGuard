@@ -7,7 +7,7 @@
 
 ;;;Base inference
 
-(defparameter *known*
+(defparameter +general-known+
   (list
    '(eq ?x ?x) ;;Must be op
    '(true true)
@@ -15,21 +15,22 @@
    ))
 
    
-(defparameter *rules*
+(defparameter +general-rules+
   (list
    
    ;;Expressions
    (rule
-    (op ?x !- ?y)
+    (axiom ?x !- ?y)
     (reduces ?x ?y))
+   
    (rule
-    (op ?x !- ?y)
+    (axiom ?x !- ?y)
     (applicates ?x ?y))
    
-   (rule (op ?x <=> ?y)
-	 (op ?x !- ?y))
-   (rule (op ?x <=> ?y)
-	 (op ?y !- ?x))
+   (rule (def ?x <=> ?y)
+	 (axiom ?x !- ?y))
+   (rule (def ?x <=> ?y)
+	 (axiom ?y !- ?x))
    
    ;;Operators
    (rule
@@ -37,6 +38,7 @@
      (true ?x)
      (true ?y))
     (true (?x and ?y)))
+   
    (rule
     (or
      (false ?x)
@@ -58,11 +60,11 @@
    ;;Consequences and prerequisites
 
    (rule
-    (lisp-value simplify (consequence ?x of ?y))
+    (modus:lisp-value simplify (consequence ?x of ?y))
     (consequence ?x of ?y))
 
    (rule
-    (lisp-value simplify (prerequisite ?x of ?y))
+    (modus:lisp-value simplify (prerequisite ?x of ?y))
     (prerequisite ?x of ?y))
    
    ;;Inference
@@ -100,7 +102,10 @@
    
    (rule (applicates ?x ?y)
 	 (reduces (not ?y) (not ?x)))
-))
+   ))
+
+(defparameter *known* +general-known+)
+(defparameter *rules* +general-rules+)
 
 ;;Simplify
 
@@ -112,11 +117,11 @@
 
 (defconstant +simplify-rules+
   (list
-   
+
    (rule
     (or (consequence ?x of ?z)
 	(consequence ?x of ?y))
-    (consequence ?x of (?z and ?y)))
+    (consequence ?x of (?z and ?y))) ;Warning! This pattern is applicative. (consequence ?x of ?x) gives infinite recursion. Althrough, with lists it works quite well.
    
    (rule
     (or (prerequisite ?x of ?z)
@@ -142,15 +147,30 @@
 
 (defun simplify(stat)
   (let-be [*rules* +simplify-rules+
-	   *known* +simplify-known+]
-    (rule-inference (expr-predicate stat))))
+	   *known* +simplify-known+
+	   *sweeped* nil]
+    (evaluate stat)))
 
 ;;;Inference
 
+(defmacro with-axioms ((&rest rules) &body forms)
+  `(let ((*known* (append ',rules *known*)))
+     ,@forms))
+
+(defmacro with-environment
+    (known
+     rules
+     facts
+     &body forms)
+  `(let ((*known* (append (append ,facts ,known) *known*))
+	 (*rules* (append ,rules *rules*)))
+     ,@forms))
+
 (defun infer(stat)
-  (let-be [bnds-list (rule-inference (expr-predicate `(?x (not ,stat))))
-	   ?xs (mapcar (lambda (bnds) (cdr (assoc '?x bnds))) bnds-list)]
+  (let-be [(_ any-true) (evaluate `(true (not ,stat)))
+	   (_ any-false) (evaluate `(false (not ,stat)))]
     (cond
-      ((find 'true ?xs) 'false)
-      ((find 'false ?xs) 'true)
+      ((and any-true any-false) (error "Contradiction found!"))
+      (any-true 'false)
+      (any-false 'true)
       (t stat))))
