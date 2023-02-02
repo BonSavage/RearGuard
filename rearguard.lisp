@@ -37,25 +37,25 @@
     (and
      (true ?x)
      (true ?y))
-    (true (?x and ?y)))
+    (true (and ?x ?y)))
    
    (rule
     (or
      (false ?x)
      (false ?y))
-    (false (?x and ?y)))
+    (false (and ?x ?y)))
    
    (rule
     (or
      (true ?x)
      (true ?y))
-    (true (?x or ?y)))
+    (true (or ?x ?y)))
    
    (rule
     (and
      (false ?x)
      (false ?y))
-    (false (?x or ?y)))
+    (false (or ?x ?y)))
 
    ;;Consequences and prerequisites
 
@@ -111,6 +111,7 @@
 
 (defconstant +simplify-known+
   (list
+   '(eq ?a ?a)
    '(consequence ?x of ?x)
    '(prerequisite ?x of ?x)
    ))
@@ -119,14 +120,16 @@
   (list
 
    (rule
-    (or (consequence ?x of ?z)
-	(consequence ?x of ?y))
-    (consequence ?x of (?z and ?y))) ;Warning! This pattern is applicative. (consequence ?x of ?x) gives infinite recursion. Althrough, with lists it works quite well.
+    (and (none (eq ?x (and ?z ?y)))
+	 (or (consequence ?x of ?z)
+	     (consequence ?x of ?y)))
+    (consequence ?x of (and ?z ?y))) ;Warning! This pattern is applicative. (consequence ?x of ?x) gives infinite recursion. Althrough, with lists it works quite well.
    
    (rule
-    (or (prerequisite ?x of ?z)
-	(prerequisite ?x of ?y))
-    (prerequisite ?x of (?z or ?y)))
+    (and (none (eq ?x (or ?z ?y)))
+	 (or (prerequisite ?x of ?z)
+	     (prerequisite ?x of ?y)))
+    (prerequisite ?x of (or ?z ?y)))
    
    (rule (consequence ?x of ?y)
 	 (prerequisite (not ?y) of (not ?x)))
@@ -135,21 +138,25 @@
 	 (consequence (not ?y) of (not ?x)))
    
    (rule (and
+	  (none (eq ?x (or ?y ?z)))
   	  (consequence ?x of ?y)
   	  (consequence ?x of ?z))
-  	 (consequence ?x of (?y or ?z)))
+  	 (consequence ?x of (or ?y ?z)))
    
    (rule (and
+	  (none (eq ?x (and ?y ?z)))
   	  (prerequisite ?x of ?y)
  	  (prerequisite ?x of ?z))
-	 (prerequisite ?x of (?y and ?z)))
+	 (prerequisite ?x of (and ?y ?z)))
    ))
 
 (defun simplify(stat)
-  (let-be [*rules* +simplify-rules+
-	   *known* +simplify-known+
-	   *sweeped* nil]
-    (evaluate stat)))
+  (if (and nil (eq (second stat) (fourth stat))) ;Consequence or prerequisite of itself
+      (values nil t)
+      (let-be [*rules* +simplify-rules+
+	       *known* +simplify-known+
+	       *sweeped* nil]
+	(evaluate stat))))
 
 ;;;Inference
 
@@ -174,3 +181,14 @@
       (any-true 'false)
       (any-false 'true)
       (t stat))))
+
+;;Debug
+
+(defun variants(stat)
+  (awith (evaluate stat)
+    (mapcar (lambda (sub) (sublis sub stat)) it)))
+
+(defun print-variants(stat)
+  (awith (variants stat)
+    (dolist (elem it)
+      (format t "~a ~&" elem))))
