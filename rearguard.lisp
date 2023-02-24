@@ -1,36 +1,25 @@
 ;;;; RearGuard theorem prover
 ;;;; Complete rewrite on the top of Modus
-;;;; 14.07.2022
+;;;; 14.07.2022: v. 1
+;;;; 19.02.2023: v. 2
 ;;;; Maxim "BonSavage" Kirillov
 
 (in-package :rearguard)
 
-;;;Base inference
+;;;Inference of applicative consequences
 
-(defparameter +general-known+
+(defparameter +inference-known+
   (list
    '(eq ?x ?x) ;;Must be op
    '(true true)
    '(false false)
+   ;'(applicates (and ?x ?y) ?x)
+   ;'(applicates (and ?x ?y) ?y)
    ))
 
    
-(defparameter +general-rules+
+(defparameter +inference-rules+
   (list
-   
-   ;;Expressions
-   (rule
-    (axiom ?x !- ?y)
-    (reduces ?x ?y))
-   
-   (rule
-    (axiom ?x !- ?y)
-    (applicates ?x ?y))
-   
-   (rule (def ?x <=> ?y)
-	 (axiom ?x !- ?y))
-   (rule (def ?x <=> ?y)
-	 (axiom ?y !- ?x))
    
    ;;Operators
    (rule
@@ -49,7 +38,7 @@
     (or
      (true ?x)
      (true ?y))
-    (true (or ?x ?y)))
+    (true (or ?x ?y)))   
    
    (rule
     (and
@@ -78,34 +67,162 @@
     (false (not ?x)))
    
    (rule
-    (or
-     (known ?x)
      (and
       (applicates ?y ?z)
       (consequence ?x of ?z)
-      (true ?y)))
-    (true ?x)) ;This rule is applicable for negation as well
+      (true ?y))
+     (true ?x)) ;This rule is applicable for negation as well
+
    
+   ;(rule
+   ; (or
+   ;  (known (not ?x))
+   ;  (and
+   ;   (applicates ?y ?z)
+   ;   (prerequisite ?x of ?y)
+   ;   (false ?z)))
+   ; (false ?x))
+   
+   ))
+
+(defparameter *known* +inference-known+)
+(defparameter *rules* +inference-rules+)
+
+;;Inference of reductive consequences
+
+;;Reader
+
+(defconstant +read-known+
+  '(
+    (reduces (and ?x ?y) ?x)
+    (reduces (and ?x ?y) ?y)
+    (true true)
+   ))
+
+(defconstant +read-rules+
+  (list
+
+   ;(rule
+   ; (axiom ?x !- ?y)
+   ; (reduces ?x ?y)) ;Applications successfully deals with it
+
    (rule
-    (or
-     (known (not ?x))
-     (and
-      (applicates ?y ?z)
-      (prerequisite ?x of ?y)
-      (false ?z)))
-    (false ?x))
+    (axiom ?x !- ?y)
+    (applicates ?x ?y))
+
+   (rule
+    (axiom ?x <->> ?y)
+    (reduces ?x ?y))
+
+   (rule
+    (axiom ?x <->> ?y)
+    (applicates ?y ?x))
    
-   ;;Unsafe
+   (rule (def ?x <=> ?y)
+	 (axiom ?x !- ?y))
+   
+   (rule (def ?x <=> ?y)
+	 (axiom ?y !- ?x))
+   
    (rule
     (reduces ?x ?y)
     (applicates (not ?y) (not ?x)))
    
-   (rule (applicates ?x ?y)
-	 (reduces (not ?y) (not ?x)))
+   (rule
+    (applicates ?x ?y)
+    (reduces (not ?y) (not ?x)))
    ))
 
-(defparameter *known* +general-known+)
-(defparameter *rules* +general-rules+)
+(defun parse-applications(states)
+  (let-be [*known* states
+	   *rules* +read-rules+]
+    (variants '(applicates ?x ?y))))
+
+(defun parse-reductions(states)
+  (let-be [*known* (append +read-known+ states)
+	   *rules* +read-rules+]
+    (variants '(reduces ?x ?y))))
+
+(defun reduce-known(known reductions)
+  (let-be [*rules* +read-rules+
+	   *known* (append known reductions)
+	   *sweeped* nil]
+    (append
+     known
+     (variants '(known ?x))
+     (mappend
+      (lambda (fact)
+	(let-be [bindings (evaluate `(=> ,(second fact) ?x))
+		 res (mapcar (alexandria:rcurry #'sublis '(known ?x)) bindings)]
+	  res))
+      known))))
+
+(defparameter +reduce-rules+
+  (list
+
+   (rule
+    (true ?x)
+    (reduces (or ?x ?y) ?y))
+
+   (rule
+    (true ?y)
+    (reduces (or ?x ?y) ?x))
+
+   ;(rule
+   ; (known ?x)
+   ; (true ?x))
+
+   (rule
+    (and
+     (true ?x)
+     (true ?y))
+    (true (and ?x ?y)))
+   
+   (rule
+    (or
+     (true (not ?x))
+     (true (not ?y)))
+    (true (not (and ?x ?y))))
+   
+   (rule
+    (or
+     (true ?x)
+     (true ?y))
+    (true (or ?x ?y)))
+   
+   (rule
+    (and
+     (true (not ?x))
+     (true (not ?y)))
+    (true (not (or ?x ?y))))
+
+   (rule
+    (and
+     (or
+      (and
+       (reduces ?y ?x)
+       (true ?y))
+      (true ?x))
+     (none (true ?x)))
+    (newly-true ?x))
+
+   ))
+
+(defun reduce-true(known reductions)
+  (let-be [*rules* +reduce-rules+
+	   *known* (append reductions (mapcar (lambda (stat) (list 'true (second stat))) known) *known*)
+	   *sweeped* nil]
+    (alet ((true nil) (newly-true nil))
+      (let-be [*known* (append newly-true *known*)
+	       newly-true (remove-duplicates
+			   (mapcar (alexandria:rcurry #'sublis '(true ?x))
+				   (evaluate '(newly-true ?x)))
+			   :test #'equalp)
+	       true (append newly-true true)]
+	(if newly-true
+	    (self true newly-true)
+	    true)))))
+
 
 ;;Simplify
 
@@ -151,27 +268,31 @@
    ))
 
 (defun simplify(stat)
-  (if (and nil (eq (second stat) (fourth stat))) ;Consequence or prerequisite of itself
-      (values nil t)
-      (let-be [*rules* +simplify-rules+
-	       *known* +simplify-known+
-	       *sweeped* nil]
-	(evaluate stat))))
-
+  (let-be [*rules* +simplify-rules+
+	   *known* +simplify-known+
+	   *sweeped* nil]
+    (evaluate stat)))
 ;;;Inference
 
 (defmacro with-axioms ((&rest rules) &body forms)
   `(let ((*known* (append ',rules *known*)))
      ,@forms))
 
+(defstruct environment
+  (reductions)
+  (applications))
+
+(defmacro define-environment(name &rest axioms)
+  `(defconstant ,name (make-environment
+		       :applications (parse-applications ',axioms)
+		       :reductions (parse-reductions ',axioms))))
+
 (defmacro with-environment
-    (known
-     rules
-     facts
+    (env
+     known
      &body forms)
-  `(let ((*known* (append (append ,facts ,known) *known*))
-	 (*rules* (append ,rules *rules*)))
-     ,@forms))
+  `(let-be [*known* (append +inference-known+ (environment-applications ,env) (reduce-true ',known (environment-reductions ,env)))]
+	   ,@forms))
 
 (defun infer(stat)
   (let-be [(_ any-true) (evaluate `(true (not ,stat)))
@@ -186,7 +307,7 @@
 
 (defun variants(stat)
   (awith (evaluate stat)
-    (mapcar (lambda (sub) (sublis sub stat)) it)))
+    (filtering-map (lambda (sub) (when sub (sublis sub stat))) it)))
 
 (defun print-variants(stat)
   (awith (variants stat)
