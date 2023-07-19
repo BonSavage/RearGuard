@@ -7,40 +7,43 @@
 
 (in-package :rearguard)
 
-;;;Inference of applicative consequences
-
 (defparameter *known* nil)
 (defparameter *rules* nil)
 
-;;Inference of reductive consequences
-
 ;;Reader
-
 
 (defconstant +read-rules+
   (list
 
-   (rule
-    (axiom ?x !- ?y)
-    (reduces ?x ?y)) ;Applications successfully deals with it
+					;(rule
+					; (axiom ?x !- ?y)
+					; (reduces ?x ?y)) ;Applications successfully deals with it
+   
+   ;(rule
+   ; (axiom ?x !- ?y)
+   ; (applicates ?x ?y))
 
-   (rule
-    (axiom ?x !- ?y)
-    (applicates ?x ?y))
+   ;(rule
+   ; (axiom ?x <->> ?y)
+   ; (reduces ?x ?y))
 
-   (rule
-    (axiom ?x <->> ?y)
-    (reduces ?x ?y))
-
-   (rule
-    (axiom ?x <->> ?y)
-    (applicates ?y ?x))
+   ;(rule
+   ; (axiom ?x <->> ?y)
+   ; (applicates ?y ?x))
    
    (rule (def ?x <=> ?y)
 	 (axiom ?x !- ?y))
    
    (rule (def ?x <=> ?y)
 	 (axiom ?y !- ?x))
+
+   (rule
+    (request ?x -> ?y)
+    (applicates ?x ?y))
+
+   (rule
+    (request ?x -> ?y)
+    (reduces ?x ?y))
    
    (rule
     (reduces ?x ?y)
@@ -67,14 +70,19 @@
     (applicates (and ?z (not ?y)) ?y))))
 
 (defun parse-applications(states)
-  (let-be [*known* states
+  (let-be [*known* (append states (parse-axioms states))
 	   *rules* +read-rules+]
     (variants '(applicates ?x ?y))))
 
 (defun parse-reductions(states)
-  (let-be [*known* states
+  (let-be [*known* (append states (parse-axioms states))
 	   *rules* +read-rules+]
     (variants '(reduces ?x ?y))))
+
+(defun parse-supply(states)
+  (let-be [*known* states
+	   *rules* +read-rules+]
+    (variants '(supply ?x = ?y))))
 
 (defun reduce-true-once()
   (append (remove-duplicates
@@ -107,10 +115,12 @@
 
 (defstruct environment
   (reductions)
-  (applications))
+  (applications)
+  (supply))
 
 (defmacro define-environment(name &body axioms)
   `(defconstant ,name (make-environment
+		       :supply (compile-supply (parse-supply ',axioms))
 		       :applications (compile-conclusions (parse-applications ',axioms))
 		       :reductions (compile-conclusions (parse-reductions ',axioms)))))
 
@@ -141,3 +151,21 @@
   (awith (variants stat)
     (dolist (elem it)
       (format t "~a ~&" elem))))
+
+;;Experimental
+
+(defun parse-axiom(axi)
+  (let-be [(list _ prereq _ conseq) axi]
+    (list
+     (when (<= (length (modus::extract-variables prereq))
+	       (length (modus::extract-variables conseq)))
+       (list 'applicates prereq conseq))
+     (when (>= (length (modus::extract-variables prereq))
+	       (length (modus::extract-variables conseq)))
+       (list 'reduces prereq conseq)))))
+
+(defun parse-axioms(stats)
+  (let-be [*known* stats
+	   *rules* +read-rules+
+	   lst (variants '(axiom ?x !- ?y))]
+    (mappend #'parse-axiom lst)))

@@ -22,6 +22,8 @@
 	(and (cons 'modus:and (mapcar #'compile-prerequisite (cdr pre))))
 	(or (cons 'modus:or (mapcar #'compile-prerequisite (cdr pre))))
 	(not (negate-expr (cadr pre) #'compile-prerequisite))
+	(lisp-code! `(lisp-value ,@(cdr pre)))
+	(eval! (cdr pre))
 	(t (list 'true pre)))
       (list 'true pre)))
 
@@ -57,36 +59,42 @@
       compiled-expr
       (case (car compiled-expr)
 	((newly-true true) (cadr compiled-expr))
-	(false (simple-negate (decompile-expr (cadr compiled-expr))))
+	((false newly-false) (simple-negate (decompile-expr (cadr compiled-expr))))
 	((and or) (cons (car compiled-expr)
 			(mapcar #'decompile-expr (cdr compiled-expr))))
-	(t compiled-expr))))
+	(lisp-value (cons 'lisp-code! (cdr compiled-expr)))
+	(t (cons 'eval! compiled-expr)))))
 
 (defun complement-type(type)
   (case type
     (reduces 'applicates)
     (applicates 'reduces)))
 
+(defun build-and-variants(type compiled prerequisite)
+  (let-be [(list op . operands) compiled
+	   prereq (compile-prerequisite prerequisite)]
+    (mappend
+     (lambda (operand)
+       (compile-to-rules
+	(list type
+	      (decompile-expr `(and ,@(mapcar (lambda (op) `(false ,(decompile-expr op))) (remove operand operands :count 1 :test #'eq)) ,prereq))
+	      (decompile-expr operand))))
+     operands)))
+
 (defun compile-to-rules(conc)
   (let-be [(list type prerequisite consequence) conc
 	   compiled (precompile-consequence consequence)]
     (case (car compiled)
       (and (mappend (lambda (expr) (compile-to-rules `(,type ,prerequisite ,(decompile-expr expr)))) (cdr compiled)))
-      (or
-       (let-be [(list op operand1 operand2) compiled
-		prereq (compile-prerequisite prerequisite)]
-	 (mappend
-	  #'compile-to-rules
-	  (list
-	   (list
-	    type
-	    (decompile-expr `(and (false ,(decompile-expr operand1)) ,prereq))
-	    (decompile-expr operand2))
-	   (list
-	    type
-	    (decompile-expr `(and (false ,(decompile-expr operand2)) ,prereq))
-	    (decompile-expr operand1))))))
+      (or (build-and-variants type compiled prerequisite))
       (t (list (compile-conclusion (list type prerequisite compiled)))))))
 
 (defun compile-conclusions(rules)
   (remove-duplicates (mappend #'compile-to-rules rules) :test #'equalp))
+
+(defun compile-supply(supply)
+  (mapcar (lambda (sup)
+	    (let-be [(list _ prereq _ conseq) sup]
+	      (modus::make-rule (modus::expr-predicate prereq)
+				(modus::expr-predicate conseq))))
+	  supply))
