@@ -1,2 +1,2 @@
 # RearGuard
-Rewrite of my RearGuard theorem prover on top of Modus
+Logically-complete declarative Common Lisp theorem prover.
